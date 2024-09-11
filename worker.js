@@ -3,47 +3,48 @@
 const tab_highlight = {};
 let index_queue = {};
 
-chrome.runtime.onMessage.addListener((request, sender, response) => {
+chrome.runtime.onMessage.addListener(async (request, sender, response) => {
   if (request.method === "find") {
-    chrome.tabs.update(request.tabId, {
-      active: true,
-    });
-    chrome.windows.update(request.windowId, {
-      focused: true,
-    });
-    chrome.storage.local.get(
-      {
-        strict: false,
-      },
-      (prefs) => {
-        if (
-          request.snippet &&
-          (request.snippet.includes("<b>") || prefs.strict)
-        ) {
-          tab_highlight[request.tabId] = request;
-          chrome.scripting.executeScript(
-            {
-              target: {
-                tabId: request.tabId,
-                allFrames: true,
-              },
-              files: ["/data/highlight.js"],
-            },
-            () => chrome.runtime.lastError
-          );
-        }
-        try {
-          response();
-        } catch (e) {}
-      }
-    );
+    try {
+      chrome.tabs.update(request.tabId, {
+        active: true,
+      });
+      chrome.windows.update(request.windowId, {
+        focused: true,
+      });
+    } catch (e) {
+      console.warn(`failed to activate tab ${request.tabId}: ${e}`);
+      return;
+    }
+    let prefs = await chrome.storage.local.get({strict: false});
+    if (
+      request.snippet &&
+      (request.snippet.includes("<b>") || prefs.strict)
+    ) {
+      tab_highlight[request.tabId] = request;
+      chrome.scripting.executeScript(
+        {
+          target: {
+            tabId: request.tabId,
+            allFrames: true,
+          },
+          files: ["/data/highlight.js"],
+        },
+        () => chrome.runtime.lastError
+      );
+    }
+  }
 
-    return true;
-  } else if (request.method === "get_highlight") {
-    response(tab_highlight[sender.tab.id]);
-  } else if (request.method === "delete") {
+  if (request.method === "get_highlight") {
+    return tab_highlight[sender.tab.id];
+  }
+
+  if (request.method === "delete") {
     chrome.tabs.remove(request.ids);
-  } else if (request.method === "group") {
+    return;
+  }
+
+  if (request.method === "group") {
     const tabId = request.ids.shift();
     chrome.windows.create(
       {
@@ -61,11 +62,17 @@ chrome.runtime.onMessage.addListener((request, sender, response) => {
         }
       }
     );
-  } else if (request.method === "get_jobs") {
-    console.log(`tab delta: ${Object.keys(index_queue)}`);
-    response(index_queue);
-    index_queue = {};
+    return;
   }
+
+  if (request.method === "get_jobs") {
+    console.log(`tab delta: ${Object.keys(index_queue)}`);
+    const ret = index_queue;
+    index_queue = {};
+    return ret;
+  }
+
+  throw "Invalid request";
 });
 
 /* action */
