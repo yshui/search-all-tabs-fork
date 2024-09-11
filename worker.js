@@ -2,8 +2,64 @@
 
 const tab_highlight = {};
 let index_queue = {};
+let all_seen_tabs = new Set([]);
+let started = false;
+
+// remove all remaining databases on startup
+const once = async () => {
+  for (const { name } of await indexedDB.databases()) {
+    indexedDB.deleteDatabase(name);
+  }
+
+  index_queue = {};
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    index_queue[tab.id] = 1;
+    all_seen_tabs.add(tab.id);
+  }
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    console.log(`Removed tab: ${tabId}`);
+    delete tab_highlight[tabId];
+    all_seen_tabs.delete(tabId);
+    index_queue[tabId] = -1;
+  });
+  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if (info.discarded === true) {
+      // Don't re-index discarded tabs
+      return;
+    }
+    if (!all_seen_tabs.has(tabId)) {
+      console.log(`New tab ${tabId}`);
+      index_queue[tabId] = 1;
+      all_seen_tabs.add(tabId);
+    } else {
+      console.log(`Updated tab: ${tabId}`);
+      index_queue[tabId] = 0;
+    }
+    console.log(`Updated tab: ${tabId}`);
+    console.log("Changed attributes: ", info);
+    console.log("New tab Info: ", tab);
+  });
+  chrome.tabs.onActivated.addListener(({ tabId }) => {
+    console.log(`Activated tab: ${tabId}`);
+    if (!all_seen_tabs.has(tabId)) {
+      console.log("Activated tab was never seen.");
+      all_seen_tabs.add(tabId);
+      index_queue[tabId] = 1;
+    } else {
+      index_queue[tabId] = 0;
+    }
+  });
+  started = true;
+};
+chrome.runtime.onInstalled.addListener(once);
+chrome.runtime.onStartup.addListener(once);
 
 chrome.runtime.onMessage.addListener(async (request, sender, response) => {
+  if (!started) {
+    console.warn("startup routine not called?!?!");
+    await once();
+  }
   if (request.method === "find") {
     try {
       chrome.tabs.update(request.tabId, {
@@ -105,47 +161,6 @@ chrome.storage.onChanged.addListener((ps) => {
     });
   }
 });
-
-// remove all remaining databases on startup
-{
-  const once = async () => {
-    for (const { name } of await indexedDB.databases()) {
-      indexedDB.deleteDatabase(name);
-    }
-
-    index_queue = {};
-    const tabs = await chrome.tabs.query({});
-    for (const tab of tabs) {
-      index_queue[tab.id] = 1;
-    }
-    chrome.tabs.onRemoved.addListener((tabId) => {
-      console.log(`Removed tab: ${tabId}`);
-      delete tab_highlight[tabId];
-      index_queue[tabId] = -1;
-    });
-    chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-      if (info.discarded === true) {
-        // Don't re-index discarded tabs
-        return;
-      }
-      console.log(`Updated tab: ${tabId}`);
-      index_queue[tabId] = 0;
-      // console.log(`Updated tab: ${tabId}`);
-      // console.log("Changed attributes: ", info);
-      // console.log("New tab Info: ", tab);
-    });
-    chrome.tabs.onActivated.addListener(({ tabId }) => {
-      console.log(`Activated tab: ${tabId}`);
-      index_queue[tabId] = 0;
-    });
-    chrome.tabs.onCreate.addListener((tab) => {
-      console.log(`Created tab: ${tab.id}`);
-      index_queue[tab.id] = 1;
-    });
-  };
-  chrome.runtime.onInstalled.addListener(once);
-  chrome.runtime.onStartup.addListener(once);
-}
 
 /* FAQs & Feedback */
 {
