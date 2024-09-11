@@ -96,7 +96,10 @@ const index = async (tabId, options = {}) => {
     }, options['fetch-timeout']))])
   };
 
-  const tab = await chrome.tabs.get(tabId);
+  const tab = await chrome.tabs.get(tabId).catch(e => console.log(e));
+  if (!tab) {
+    return 0;
+  }
   let arr = await get_tab_info(tab, options);
   try {
     arr = arr.filter(a => a && (a.title || a.body));

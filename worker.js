@@ -39,7 +39,6 @@ const once = async () => {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
     index_queue[tab.id] = 1;
-    all_seen_tabs[tab.id] = true;
   }
   await save();
 };
@@ -52,8 +51,12 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
   console.log(`Removed tab: ${tabId}`);
   delete tab_highlight[tabId];
-  delete all_seen_tabs[tabId];
-  index_queue[tabId] = -1;
+  if (tabId in all_seen_tabs) {
+    delete all_seen_tabs[tabId];
+    index_queue[tabId] = -1;
+  } else {
+    delete index_queue[tabId];
+  }
   await save();
 });
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
@@ -68,7 +71,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (!(tabId in all_seen_tabs)) {
     console.log(`New tab ${tabId}`);
     index_queue[tabId] = 1;
-    all_seen_tabs[tabId] = true;
   } else {
     console.log(`Updated tab: ${tabId}`);
     index_queue[tabId] = 0;
@@ -86,7 +88,6 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   console.log(`Activated tab: ${tabId}`);
   if (!(tabId in all_seen_tabs)) {
     console.log("Activated tab was never seen.");
-    all_seen_tabs[tabId] = true;
     index_queue[tabId] = 1;
   } else {
     index_queue[tabId] = 0;
@@ -170,6 +171,9 @@ chrome.runtime.onMessage.addListener(async (request, sender, response) => {
     console.log(`tab delta: ${Object.keys(index_queue)}`);
     const ret = index_queue;
     index_queue = {};
+    for (const [k, _] of Object.entries(ret)) {
+      all_seen_tabs[k] = true;
+    }
     await save();
     return ret;
   }
