@@ -60,14 +60,14 @@
       title: 'Search Engine',
       contexts: ['action']
     });
-    create({
-      type: 'radio',
-      id: 'engine:lunr',
-      title: 'lunr.js',
-      contexts: ['action'],
-      checked: prefs.engine === 'lunr',
-      parentId: 'search-engine'
-    });
+    // create({
+    //   type: 'radio',
+    //   id: 'engine:lunr',
+    //   title: 'lunr.js',
+    //   contexts: ['action'],
+    //   checked: prefs.engine === 'lunr',
+    //   parentId: 'search-engine'
+    // });
     create({
       type: 'radio',
       id: 'engine:xapian',
