@@ -169,13 +169,21 @@ chrome.runtime.onMessage.addListener(async (request, sender, response) => {
       return {};
     }
     console.log(`tab delta: ${Object.keys(index_queue)}`);
-    const ret = index_queue;
-    index_queue = {};
-    for (const [k, _] of Object.entries(ret)) {
+    return index_queue;
+  }
+
+  if (request.method === "index_complete") {
+    if (!await restore()) {
+      console.warn("this shouldn't happen");
+      return;
+    }
+    console.log("index completed");
+    for (const [k, _] of Object.entries(index_queue)) {
       all_seen_tabs[k] = true;
     }
+    index_queue = {};
     await save();
-    return ret;
+    return;
   }
 
   throw "Invalid request";

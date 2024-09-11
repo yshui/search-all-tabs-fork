@@ -186,6 +186,9 @@ const index_tabs = async prefs => {
   docs -= failed;
   await engine.commit();
   await chrome.storage.session.set({ docs });
+  await chrome.runtime.sendMessage({
+    method: "index_complete"
+  });
   return {docs, failed};
 }
 
