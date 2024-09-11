@@ -32,67 +32,76 @@ arrange.do = () => {
 const cache = {};
 
 const index = (tab, scope = 'both', options = {}) => {
-  const od = {
-    body: '',
-    date: new Date(document.lastModified).toISOString().split('T')[0].replace(/-/g, ''),
-    description: '',
-    frameId: 0,
-    keywords: '',
-    lang: 'english',
-    mime: 'text/html',
-    title: tab.title,
-    url: tab.url,
-    top: true
-  };
+  const get_tab_info = (tab, scope, options) => {
+    const od = {
+      body: '',
+      date: new Date(document.lastModified).toISOString().split('T')[0].replace(/-/g, ''),
+      description: '',
+      frameId: 0,
+      keywords: '',
+      lang: 'english',
+      mime: 'text/html',
+      title: tab.title,
+      url: tab.url,
+      top: true
+    };
 
-  return Promise.race([new Promise(resolve => {
-    chrome.scripting.executeScript({
-      target: {
-        tabId: tab.id,
-        allFrames: true
-      },
-      files: ['/data/collect.js']
-    }).catch(() => []).then(arr => {
-      chrome.runtime.lastError;
-      arr = (arr || []).filter(a => a && a.result).map(a => a.result);
-      arr = (arr && arr.length ? arr : [od]).map(o => {
-        o.title = o.title || tab.title;
-        return o;
-      });
 
-      // support parsing PDF files
-      let parse = false;
-      if (options['parse-pdf'] === true) {
-        if (arr && tab.url && (arr[0].mime === 'application/pdf' || tab.url.includes('.pdf'))) {
-          if (scope === 'both' || scope === 'body') {
-            parse = true;
+    if (tab.discarded === true) {
+        return new Promise(resolve => resolve([od]));
+    }
+
+    return Promise.race([new Promise(resolve => {
+      chrome.scripting.executeScript({
+        target: {
+          tabId: tab.id,
+          allFrames: true
+        },
+        files: ['/data/collect.js']
+      }).catch(() => []).then(arr => {
+        chrome.runtime.lastError;
+        arr = (arr || []).filter(a => a && a.result).map(a => a.result);
+        arr = (arr && arr.length ? arr : [od]).map(o => {
+          o.title = o.title || tab.title;
+          return o;
+        });
+
+        // support parsing PDF files
+        let parse = false;
+        if (options['parse-pdf'] === true) {
+          if (arr && tab.url && (arr[0].mime === 'application/pdf' || tab.url.includes('.pdf'))) {
+            if (scope === 'both' || scope === 'body') {
+              parse = true;
+            }
           }
         }
-      }
-      if (parse) {
-        pdfjsLib.getDocument(tab.url).promise.then(pdf => {
-          return Promise.all(Array.from(Array(pdf.numPages)).map(async (a, n) => {
-            const page = await pdf.getPage(n + 1);
-            const content = await page.getTextContent();
-            return content.items.map(s => s.str).join('') + '\n\n' +
-              content.items.map(s => s.str).join('\n');
-          })).then(a => a.join('\n\n')).then(c => {
-            arr[0].body = c;
-            arr[0].pdf = true;
+        if (parse) {
+          pdfjsLib.getDocument(tab.url).promise.then(pdf => {
+            return Promise.all(Array.from(Array(pdf.numPages)).map(async (a, n) => {
+              const page = await pdf.getPage(n + 1);
+              const content = await page.getTextContent();
+              return content.items.map(s => s.str).join('') + '\n\n' +
+                content.items.map(s => s.str).join('\n');
+            })).then(a => a.join('\n\n')).then(c => {
+              arr[0].body = c;
+              arr[0].pdf = true;
+              resolve(arr);
+            });
+          }).catch(e => {
+            console.warn('Cannot parse PDF document', tab.url, e);
             resolve(arr);
           });
-        }).catch(e => {
-          console.warn('Cannot parse PDF document', tab.url, e);
+        }
+        else {
           resolve(arr);
-        });
-      }
-      else {
-        resolve(arr);
-      }
-    });
-  }), new Promise(resolve => setTimeout(() => {
-    resolve([od]);
-  }, options['fetch-timeout']))]).then(async arr => {
+        }
+      });
+    }), new Promise(resolve => setTimeout(() => {
+      resolve([od]);
+    }, options['fetch-timeout']))])
+  };
+
+  return get_tab_info(tab, scope, options).then(async arr => {
     try {
       arr = arr.filter(a => a && (a.title || a.body));
 
