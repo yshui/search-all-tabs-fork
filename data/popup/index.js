@@ -3,8 +3,6 @@
 
 // Tests => PDF, discarded tab, about:blank, chrome://extensions/, google, webstore
 
-const isFirefox = navigator.userAgent.includes('Firefox');
-
 const pdfjsLib = window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc = './parser/pdf.worker.js';
 
@@ -355,10 +353,7 @@ const search = query => {
             clone.querySelector('h2 img').onerror = e => {
               e.target.src = 'web.svg';
             };
-            clone.querySelector('h2 img').src = obj.favIconUrl || cache[obj.tabId]?.favIconUrl || (isFirefox ?
-              ('chrome://favicon/' + obj.url) :
-              `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(obj.url)}&size=32`
-            );
+            clone.querySelector('h2 img').src = obj.favIconUrl || cache[obj.tabId]?.favIconUrl || ('chrome://favicon/' + obj.url);
             if (!obj.top) {
               clone.querySelector('h2 span[data-id="type"]').textContent = 'iframe';
             }
@@ -496,15 +491,13 @@ document.addEventListener('click', e => {
   const a = e.target.closest('[data-cmd]');
 
   if (e.target.dataset.id === 'select') {
-    if (/Firefox/.test(navigator.userAgent)) {
-      setTimeout(() => {
-        e.target.checked = !e.target.checked;
-        e.target.dispatchEvent(new Event('change', {
-          bubbles: true
-        }));
-      });
-      e.preventDefault();
-    }
+    setTimeout(() => {
+      e.target.checked = !e.target.checked;
+      e.target.dispatchEvent(new Event('change', {
+        bubbles: true
+      }));
+    });
+    e.preventDefault();
     return;
   }
 

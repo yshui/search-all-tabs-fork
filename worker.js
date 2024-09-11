@@ -1,9 +1,5 @@
 'use strict';
 
-self.importScripts('context.js');
-
-const isFF = /Firefox/.test(navigator.userAgent);
-
 const cache = {};
 chrome.tabs.onRemoved.addListener(tabId => delete cache[tabId]);
 
@@ -106,9 +102,7 @@ if (indexedDB.databases === undefined) {
   });
 }
 chrome.runtime.onConnect.addListener(port => {
-  if (isFF) {
-    localStorage.setItem(port.name, 'idb');
-  }
+  localStorage.setItem(port.name, 'idb');
   port.onDisconnect.addListener(() => {
     indexedDB.deleteDatabase(port.name);
   });
