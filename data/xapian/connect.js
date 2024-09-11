@@ -2,7 +2,7 @@
 'use strict';
 
 const xapian = {
-  name: 'object-storage-' + (Math.random() + 1).toString(36).substring(7)
+  name: 'object-storage-xapian'
 };
 
 // eslint-disable-next-line no-var
@@ -12,16 +12,35 @@ Module['onRuntimeInitialized'] = () => {
   const _add = Module.cwrap('add', null,
     ['number', 'string', 'string', 'string', 'string', 'string', 'string', 'string', 'string', 'string', 'string', 'string']
   );
+  const _commit = Module.cwrap('commit', null, ['number']);
+  const _query = Module.cwrap('query', null, ['number', 'string', 'string', 'number', 'number', 'boolean', 'boolean', 'boolean', 'boolean']);
+  const _prepare = Module.cwrap('prepare', null, ['number', 'string']);
+  const _release = Module.cwrap('release', null, ['number']);
+  const _key = Module.cwrap('key', 'number', ['number']);
+  const _snippet = Module.cwrap('snippet', 'string', ['string', 'string', 'number', 'string']);
+  const _percent = Module.cwrap('percent', 'number', ['number']);
+  const _clean = Module.cwrap('clean', null, ['number', 'string']);
   const toString = ptr => UTF8ToString(ptr); // eslint-disable-line new-cap
-
   // add a new database
   xapian.new = (index, name) => {
-    Module.cwrap('prepare', null, ['number', 'string'])(index, name);
+    _prepare(index, name);
   };
 
   xapian.release = index => {
-    Module.cwrap('release', null, ['number'])(index);
+    _release(index);
   };
+
+  xapian.remove = (guid, db = 0) => {
+    _clean(db, guid + '');
+  }
+
+  xapian.commit = async (index = 0) => {
+    _commit(index);
+    await (new Promise((resolve, reject) => FS.syncfs(err => {
+      if (err) reject(err);
+      else resolve();
+    })));
+  }
 
   xapian.add = ({
     mime = '',
@@ -33,7 +52,7 @@ Module['onRuntimeInitialized'] = () => {
     title,
     body,
     timestamp
-  }, hidden = {}, guid, db = 0, sync = true) => new Promise((resolve, reject) => {
+  }, hidden = {}, guid, db = 0) => new Promise((resolve, reject) => {
     const {hostname, pathname} = url ? new URL(url) : {
       hostname: '',
       pathname: ''
@@ -52,13 +71,7 @@ Module['onRuntimeInitialized'] = () => {
     const next = guid => {
       try {
         _add(db, guid + '', lang, hostname, url, date, filename, mime, title, keywords, description, body);
-        if (sync) {
-          Module.cwrap('commit', null, ['number'])(db);
-          resolve(guid + '');
-        }
-        else {
-          resolve(guid + '');
-        }
+        resolve(guid + '');
       }
       catch (e) {
         console.error(e);
@@ -74,7 +87,7 @@ Module['onRuntimeInitialized'] = () => {
   });
 
   xapian.search = ({query, start = 0, length = 30, lang = 'english', partial = true, spell_correction = false, synonym = false, descending = true}, db = 0) => {
-    const pointer = Module.cwrap('query', null, ['number', 'string', 'string', 'number', 'number', 'boolean', 'boolean', 'boolean', 'boolean'])(
+    const pointer = _query(
       db, lang, query, start, length, partial, spell_correction, synonym, descending
     );
     const rst = toString(pointer);
@@ -88,7 +101,7 @@ Module['onRuntimeInitialized'] = () => {
     };
   };
   xapian.search.guid = index => {
-    return toString(Module.cwrap('key', 'number', ['number'])(index));
+    return toString(_key(index));
   };
   // get body of "index"ed matching result
   xapian.search.body = index => {
@@ -98,7 +111,6 @@ Module['onRuntimeInitialized'] = () => {
   // get snippet based on the actual content of the "index"ed matching result
   // if body is not stored, content is mandatory
   xapian.search.snippet = ({index, lang = 'english', omit = '', content, size = 300}) => {
-    const _snippet = Module.cwrap('snippet', 'string', ['string', 'string', 'number', 'string']);
     if (content) {
       return Promise.resolve(_snippet(lang, content, size, omit));
     }
@@ -107,7 +119,7 @@ Module['onRuntimeInitialized'] = () => {
   };
   // get weight percent of "index"ed matching result
   xapian.search.percent = index => {
-    return Module.cwrap('percent', 'number', ['number'])(index);
+    return _percent(index);
   };
 
 
@@ -124,37 +136,42 @@ Module['onRuntimeInitialized'] = () => {
     request.onerror = reject;
   });
 
-  // open database in IDBFS or MEMFS state
-  xapian.new(0, '/database');
-  // object storage
-  const request = indexedDB.open(xapian.name, 1);
-  request.onupgradeneeded = () => {
-    const db = request.result;
+  FS.mkdir('/idb');
+  FS.mount(IDBFS, {}, '/idb');
 
-    // Delete the old database if it exists
-    if (db.objectStoreNames.contains('objects')) {
-      db.deleteObjectStore('oldObjectStore');
-    }
-    // create new storage
-    const store = db.createObjectStore('objects', {
-      keyPath: 'guid',
-      autoIncrement: true
-    });
-    store.createIndex('guid', 'guid', {
-      unique: true
-    });
-    store.createIndex('timestamp', 'timestamp', {
-      unique: false
-    });
-    store.createIndex('pinned', 'pinned', {
-      unique: false
-    });
-  };
-  request.onerror = e => console.error(e);
-  request.onsuccess = () => {
-    xapian.storage = request.result;
-    document.dispatchEvent(new Event('engine-ready'));
-  };
+  FS.syncfs(true, function(err) {
+    if (err) throw err;
+    xapian.new(0, '/idb/database');
+    // object storage
+    const request = indexedDB.open(xapian.name, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+
+      // Delete the old database if it exists
+      if (db.objectStoreNames.contains('objects')) {
+        db.deleteObjectStore('oldObjectStore');
+      }
+      // create new storage
+      const store = db.createObjectStore('objects', {
+        keyPath: 'guid',
+        autoIncrement: true
+      });
+      store.createIndex('guid', 'guid', {
+        unique: true
+      });
+      store.createIndex('timestamp', 'timestamp', {
+        unique: false
+      });
+      store.createIndex('pinned', 'pinned', {
+        unique: false
+      });
+    };
+    request.onerror = e => console.error(e);
+    request.onsuccess = () => {
+      xapian.storage = request.result;
+      document.dispatchEvent(new Event('engine-ready'));
+    };
+  });
 };
 
 xapian.language = code => {

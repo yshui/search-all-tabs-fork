@@ -28,11 +28,9 @@ arrange.do = () => {
   });
 };
 
-// keep tabs
-const cache = {};
-
-const index = (tab, scope = 'both', options = {}) => {
-  const get_tab_info = (tab, scope, options) => {
+const index = async (tabId, options = {}) => {
+  const get_tab_info = async (tab, options) => {
+    console.log(`indexing ${tab.url} ${tab.title}`);
     const od = {
       body: '',
       date: new Date(document.lastModified).toISOString().split('T')[0].replace(/-/g, ''),
@@ -46,12 +44,11 @@ const index = (tab, scope = 'both', options = {}) => {
       top: true
     };
 
-
     if (tab.discarded === true) {
-        return new Promise(resolve => resolve([od]));
+        return [od];
     }
 
-    return Promise.race([new Promise(resolve => {
+    return await Promise.race([new Promise(resolve => {
       chrome.scripting.executeScript({
         target: {
           tabId: tab.id,
@@ -70,9 +67,7 @@ const index = (tab, scope = 'both', options = {}) => {
         let parse = false;
         if (options['parse-pdf'] === true) {
           if (arr && tab.url && (arr[0].mime === 'application/pdf' || tab.url.includes('.pdf'))) {
-            if (scope === 'both' || scope === 'body') {
-              parse = true;
-            }
+            parse = true;
           }
         }
         if (parse) {
@@ -101,92 +96,63 @@ const index = (tab, scope = 'both', options = {}) => {
     }, options['fetch-timeout']))])
   };
 
-  return get_tab_info(tab, scope, options).then(async arr => {
-    try {
-      arr = arr.filter(a => a && (a.title || a.body));
+  const tab = await chrome.tabs.get(tabId);
+  let arr = await get_tab_info(tab, options);
+  try {
+    arr = arr.filter(a => a && (a.title || a.body));
 
-      for (const o of arr) {
-        o.lang = engine.language(o.lang);
-        o.title = o.title || tab.title || cache[tab.id].title;
-        if (o.title) {
-          cache[tab.id].title = o.title;
-        }
-        const favIconUrl = tab.favIconUrl || o.favIconUrl || cache[tab.id].favIconUrl;
-        if (favIconUrl) {
-          cache[tab.id].favIconUrl = favIconUrl;
-        }
-        if (scope === 'body') {
-          o.title = '';
-        }
-        else if (scope === 'title') {
-          o.body = '';
-        }
-        if (options['max-content-length'] > 0) {
-          o.body = o.body.slice(0, options['max-content-length']);
-        }
+    for (const o of arr) {
+      o.lang = engine.language(o.lang);
+      o.title = o.title || tab.title;
+      const favIconUrl = tab.favIconUrl || o.favIconUrl;
+      if (options['max-content-length'] > 0) {
+        o.body = o.body.slice(0, options['max-content-length']);
+      }
 
-        await engine.add(o, {
-          tabId: tab.id,
-          windowId: tab.windowId,
-          favIconUrl: favIconUrl || 'web.svg',
-          frameId: o.frameId,
-          top: o.top,
-          lang: o.lang
-        });
-      }
-      return arr.length;
+      await engine.add(o, {
+        tabId: tab.id,
+        windowId: tab.windowId,
+        favIconUrl: favIconUrl || 'web.svg',
+        frameId: o.frameId,
+        top: o.top,
+        lang: o.lang
+      }, tab.id);
     }
-    catch (e) {
-      console.warn('document skipped', e);
-      if (e.message.includes('memory access out of bounds')) {
-        return -1;
-      }
-      return 0;
+    return arr.length;
+  }
+  catch (e) {
+    console.warn('document skipped', e);
+    if (e.message.includes('memory access out of bounds')) {
+      return -1;
     }
-  });
+    return 0;
+  }
 };
 
-document.addEventListener('engine-ready', async () => {
-  const prefs = await (new Promise(resolve => chrome.storage.local.get({
-    'scope': 'both',
-    'index': 'browser',
-    'parse-pdf': true,
-    'fetch-timeout': 10000,
-    'max-content-length': 100 * 1024,
-    'duplicates': true,
-    'highlight-color': 'orange'
-  }, prefs => resolve(prefs))));
+const index_tabs = async prefs => {
+  let tabs_delta = await chrome.runtime.sendMessage({
+    method: 'get_jobs'
+  });
+  let tabs = []
+  let docs = (await chrome.storage.session.get({ docs: 0 })).docs;
 
-  const query = {};
-  if (prefs.index === 'window' || prefs.index === 'tab') {
-    query.currentWindow = true;
+  for (const [k, v] of Object.entries(tabs_delta)) {
+    docs += v;
+    if (v === -1) {
+      engine.remove(k);
+    } else {
+      tabs.push(+k);
+    }
   }
-  if (prefs.index === 'tab') {
-    query.active = true;
-  }
-  let tabs = await chrome.tabs.query(query);
-  tabs.forEach(tab => cache[tab.id] = tab);
 
-  // highlight
-  document.documentElement.style.setProperty(
-    '--highlight-color',
-    'var(--highlight-' + prefs['highlight-color'] + ')'
-  );
+  if (docs < 0) {
+    console.warn(`docs is negative?? ${docs}`);
+    docs = 0;
+  }
+
+  let failed = 0;
 
   // index
-  let ignored = 0;
-  if (prefs.duplicates) {
-    const list = new Set();
-    tabs = tabs.filter(t => {
-      if (list.has(t.url)) {
-        ignored += 1;
-        return false;
-      }
-      list.add(t.url);
-      return true;
-    });
-  }
-
   const length = 5; // number of simultaneous indexers
   for (let n = 0; n < tabs.length; n += length) {
     root.dataset.empty = `Indexing ${n + 1} of ${tabs.length} tabs. Please wait...`;
@@ -194,7 +160,7 @@ document.addEventListener('engine-ready', async () => {
     const pt = Array.from({
       length
     }, (_, m) => tabs[n + m]).filter(a => a);
-    const cs = await Promise.all(pt.map(tab => index(tab, prefs.scope, {
+    const cs = await Promise.all(pt.map(tab => index(tab, {
       'parse-pdf': prefs['parse-pdf'],
       'fetch-timeout': prefs['fetch-timeout'],
       'max-content-length': prefs['max-content-length']
@@ -210,21 +176,38 @@ document.addEventListener('engine-ready', async () => {
 
     for (const c of cs) {
       if (c === 0 || c === -1) {
-        ignored += 1;
-      }
-      else {
-        docs += c;
+        failed += 1;
       }
     }
   }
+  docs -= failed;
+  await engine.commit();
+  await chrome.storage.session.set({ docs });
+  return {docs, failed};
+}
 
-  if (docs === 0) {
+document.addEventListener('engine-ready', async () => {
+  const prefs = await chrome.storage.local.get({
+    'parse-pdf': true,
+    'fetch-timeout': 10000,
+    'max-content-length': 100 * 1024,
+    'duplicates': true,
+    'highlight-color': 'orange'
+  });
+  const index_result = await index_tabs(prefs);
+  // highlight
+  document.documentElement.style.setProperty(
+    '--highlight-color',
+    'var(--highlight-' + prefs['highlight-color'] + ')'
+  );
+
+  if (index_result.docs === 0) {
     root.dataset.empty = 'Nothing to index. You need to have some tabs open.';
   }
   else {
-    root.dataset.empty = `Searching among ${docs} document${docs === 1 ? '' : 's'}`;
-    if (ignored) {
-      root.dataset.empty += `. ${ignored} tab${ignored === 1 ? ' is' : 's are'} ignored.`;
+    root.dataset.empty = `Searching among ${index_result.docs} document(s)`;
+    if (index_result.failed > 0) {
+      root.dataset.empty += `. ${index_result.failed} tab(s) failed to index.`;
     }
   }
   ready = true;
@@ -237,52 +220,51 @@ document.addEventListener('engine-ready', async () => {
     }));
   }
   else {
-    chrome.storage.local.get({
+    const prefs = await chrome.storage.local.get({
       mode: 'none',
       query: ''
-    }, prefs => {
-      if (prefs.mode === 'selected' || prefs.mode === 'selectedORhistory') {
-        // do we have selected text
+    });
+    if (prefs.mode === 'selected' || prefs.mode === 'selectedORhistory') {
+      // do we have selected text
 
-        chrome.tabs.query({
-          currentWindow: true,
-          active: true
-        }, ([tab]) => chrome.scripting.executeScript({
-          target: {
-            tabId: tab.id
-          },
-          func: () => {
-            return window.getSelection().toString();
-          }
-        }, (arr = []) => {
-          if (chrome.runtime.lastError || input.value) {
-            return;
-          }
-          const query = arr.reduce((p, c) => p || c.result, '');
-          if (query) {
-            input.value = query;
-            input.select();
-            input.dispatchEvent(new Event('input', {
-              bubbles: true
-            }));
-          }
-          else if (prefs.mode === 'selectedORhistory' && prefs.query) {
-            input.value = prefs.query;
-            input.select();
-            input.dispatchEvent(new Event('input', {
-              bubbles: true
-            }));
-          }
+      const [tab] = await chrome.tabs.query({
+        currentWindow: true,
+        active: true
+      });
+      const arr = await chrome.scripting.executeScript({
+        target: {
+          tabId: tab.id
+        },
+        func: () => {
+          return window.getSelection().toString();
+        }
+      }) || [];
+      if (chrome.runtime.lastError || input.value) {
+        return;
+      }
+      const query = arr.reduce((p, c) => p || c.result, '');
+      if (query) {
+        input.value = query;
+        input.select();
+        input.dispatchEvent(new Event('input', {
+          bubbles: true
         }));
       }
-      else if (prefs.mode === 'history' && prefs.query) {
+      else if (prefs.mode === 'selectedORhistory' && prefs.query) {
         input.value = prefs.query;
         input.select();
         input.dispatchEvent(new Event('input', {
           bubbles: true
         }));
       }
-    });
+    }
+    else if (prefs.mode === 'history' && prefs.query) {
+      input.value = prefs.query;
+      input.select();
+      input.dispatchEvent(new Event('input', {
+        bubbles: true
+      }));
+    }
   }
 });
 
@@ -292,7 +274,7 @@ document.getElementById('search').addEventListener('submit', e => {
   e.preventDefault();
 });
 
-const search = query => {
+const search = async query => {
   // abort all ongoing search requests
   for (const c of search.controllers) {
     c.abort();
@@ -304,124 +286,124 @@ const search = query => {
 
   const info = document.getElementById('info');
   const start = Date.now();
-  chrome.storage.local.get({
+  const prefs = await chrome.storage.local.get({
     'snippet-size': 300,
     'search-size': 30
-  }, prefs => {
-    if (signal.aborted) {
+  });
+  if (signal.aborted) {
+    return;
+  }
+  // detect input language
+  const obj = await chrome.i18n.detectLanguage(query);
+  if (signal.aborted) {
+    return;
+  }
+  const lang = engine.language(obj && obj.languages.length ? obj.languages[0].language : 'en');
+  console.log(`query language is ${lang}`)
+
+  try {
+    const {size, estimated} = await engine.search({
+      query,
+      lang,
+      length: prefs['search-size']
+    });
+
+    document.body.dataset.size = size;
+
+    if (size === 0) {
+      info.textContent = '';
       return;
     }
-    // detect input language
-    chrome.i18n.detectLanguage(query, async obj => {
+    info.textContent =
+      `About ${estimated} results (${((Date.now() - start) / 1000).toFixed(2)} seconds in ${docs} documents)`;
+
+    const t = document.getElementById('result');
+    for (let index = 0; index < size; index += 1) {
       if (signal.aborted) {
         return;
       }
-      const lang = engine.language(obj && obj.languages.length ? obj.languages[0].language : 'en');
-
       try {
-        const {size, estimated} = await engine.search({
-          query,
-          lang,
-          length: prefs['search-size']
+        const guid = await engine.search.guid(index);
+        const obj = await engine.body(guid);
+
+        const percent = await engine.search.percent(index);
+
+        const clone = document.importNode(t.content, true);
+        clone.querySelector('a').href = obj.url;
+        Object.assign(clone.querySelector('a').dataset, {
+          tabId: obj.tabId,
+          windowId: obj.windowId,
+          frameId: obj.frameId,
+          index,
+          guid,
+          percent
         });
-
-        document.body.dataset.size = size;
-
-        if (size === 0) {
-          info.textContent = '';
-          return;
+        clone.querySelector('input[name=search]').checked = index == 0;
+        clone.querySelector('cite').textContent = obj.url;
+        clone.querySelector('h2 span[data-id="number"]').textContent = '#' + (index + 1);
+        clone.querySelector('h2').title = clone.querySelector('h2 span[data-id="title"]').textContent = obj.title;
+        clone.querySelector('h2 img').onerror = e => {
+          e.target.src = 'web.svg';
+        };
+        clone.querySelector('h2 img').src = obj.favIconUrl || ('chrome://favicon/' + obj.url);
+        if (!obj.top) {
+          clone.querySelector('h2 span[data-id="type"]').textContent = 'iframe';
         }
-        info.textContent =
-          `About ${estimated} results (${((Date.now() - start) / 1000).toFixed(2)} seconds in ${docs} documents)`;
+        const code = clone.querySelector('h2 code');
 
-        const t = document.getElementById('result');
-        for (let index = 0; index < size; index += 1) {
-          if (signal.aborted) {
-            return;
-          }
-          try {
-            const guid = await engine.search.guid(index);
-            const obj = await engine.body(guid);
-
-            const percent = await engine.search.percent(index);
-
-            const clone = document.importNode(t.content, true);
-            clone.querySelector('a').href = obj.url;
-            Object.assign(clone.querySelector('a').dataset, {
-              tabId: obj.tabId,
-              windowId: obj.windowId,
-              frameId: obj.frameId,
-              index,
-              guid,
-              percent
-            });
-            clone.querySelector('input[name=search]').checked = index == 0;
-            clone.querySelector('cite').textContent = obj.url;
-            clone.querySelector('h2 span[data-id="number"]').textContent = '#' + (index + 1);
-            clone.querySelector('h2').title = clone.querySelector('h2 span[data-id="title"]').textContent = obj.title;
-            clone.querySelector('h2 img').onerror = e => {
-              e.target.src = 'web.svg';
-            };
-            clone.querySelector('h2 img').src = obj.favIconUrl || cache[obj.tabId]?.favIconUrl || ('chrome://favicon/' + obj.url);
-            if (!obj.top) {
-              clone.querySelector('h2 span[data-id="type"]').textContent = 'iframe';
-            }
-            const code = clone.querySelector('h2 code');
-
-            code.textContent = percent + '%';
-            if (percent > 80) {
-              code.style['background-color'] = 'green';
-            }
-            else if (code > 60) {
-              code.style['background-color'] = 'orange';
-            }
-            else {
-              code.style['background-color'] = 'gray';
-            }
-            const snippet = await engine.search.snippet({
-              index,
-              size: prefs['snippet-size']
-            });
-            // the HTML code that is returns from snippet is escaped
-            // https://xapian.org/docs/apidoc/html/classXapian_1_1MSet.html#a6f834ac35fdcc58fcd5eb38fc7f320f1
-            clone.querySelector('p').content = clone.querySelector('p').innerHTML = snippet;
-
-            // intersection observer
-            new IntersectionObserver(arrange, {
-              threshold: 1.0
-            }).observe(clone.querySelector('h2'));
-
-            root.appendChild(clone);
-          }
-          catch (e) {
-            console.warn('Cannot add a result', e);
-          }
+        code.textContent = percent + '%';
+        if (percent > 80) {
+          code.style['background-color'] = 'green';
         }
+        else if (code > 60) {
+          code.style['background-color'] = 'orange';
+        }
+        else {
+          code.style['background-color'] = 'gray';
+        }
+        const snippet = await engine.search.snippet({
+          index,
+          size: prefs['snippet-size']
+        });
+        // the HTML code that is returns from snippet is escaped
+        // https://xapian.org/docs/apidoc/html/classXapian_1_1MSet.html#a6f834ac35fdcc58fcd5eb38fc7f320f1
+        clone.querySelector('p').content = clone.querySelector('p').innerHTML = snippet;
+
+        // intersection observer
+        new IntersectionObserver(arrange, {
+          threshold: 1.0
+        }).observe(clone.querySelector('h2'));
+
+        root.appendChild(clone);
       }
       catch (e) {
-        console.warn(e);
-        info.textContent = e.message || 'Unknown error occurred';
+        console.warn('Cannot add a result', e);
       }
-    });
-  });
+    }
+  }
+  catch (e) {
+    console.warn(e);
+    info.textContent = e.message || 'Unknown error occurred';
+  }
 };
 search.controllers = [];
 
-document.getElementById('search').addEventListener('input', e => {
+document.getElementById('search').addEventListener('input', async e => {
   const query = e.target.value.trim();
   root.textContent = '';
   const info = document.getElementById('info');
   if (query && ready) {
-    search(query);
+    await search(query);
   }
   else {
     info.textContent = '';
     document.body.dataset.size = ready ? 0 : -1;
   }
   // save last query
-  chrome.storage.local.set({query});
+  await chrome.storage.local.set({query});
 });
 
+/*
 const deep = async a => {
   const guid = a.dataset.guid;
   const data = await engine.body(guid);
@@ -495,6 +477,7 @@ const deep = async a => {
   }
   engine.release(1);
 };
+*/
 
 document.addEventListener('click', e => {
   const a = e.target.closest('[data-cmd]');
@@ -509,7 +492,7 @@ document.addEventListener('click', e => {
     e.preventDefault();
     return;
   }
-
+/*
   if (e.target.dataset.id === 'deep-search') {
     e.preventDefault();
     e.target.textContent = '';
@@ -517,7 +500,7 @@ document.addEventListener('click', e => {
 
     return deep(a);
   }
-
+*/
   if (a) {
     const cmd = a.dataset.cmd;
 
@@ -782,13 +765,6 @@ chrome.storage.local.get({
   engine: 'xapian'
 }, prefs => {
   const s = document.createElement('script');
-  s.onload = () => { // delete database on close
-    if (prefs.engine === 'xapian') {
-      chrome.runtime.connect({
-        name: engine.name
-      });
-    }
-  };
   s.src = '../' + prefs.engine + '/connect.js';
   console.info('I am using', prefs.engine, 'engine');
   document.body.dataset.engine = prefs.engine;
@@ -799,4 +775,3 @@ chrome.storage.local.get({
 document.addEventListener('change', () => {
   document.body.dataset.menu = Boolean(document.querySelector('#results [data-id="select"]:checked'));
 });
-

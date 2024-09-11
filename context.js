@@ -4,21 +4,19 @@
     chrome.runtime.lastError;
   });
 
-  const startup = () => chrome.storage.local.get({
-    'mode': 'none',
-    'scope': 'both',
-    'index': 'browser', // 'browser', 'window', tab'
-    'engine': 'xapian',
-    'strict': false,
-    'duplicates': true,
-    'parse-pdf': true,
-    'fetch-timeout': 10000, // ms
-    'max-content-length': 100 * 1024, // bytes
-    'search-size': 30,
-    'snippet-size': 300,
-    'highlight-color': 'orange',
-    'open-mode': 'popup'
-  }, prefs => {
+  const startup = async () => {
+    const prefs = await chrome.storage.local.get({
+      'mode': 'none',
+      'engine': 'xapian',
+      'strict': false,
+      'parse-pdf': true,
+      'fetch-timeout': 10000, // ms
+      'max-content-length': 100 * 1024, // bytes
+      'search-size': 30,
+      'snippet-size': 300,
+      'highlight-color': 'orange',
+      'open-mode': 'popup'
+    });
     create({
       id: 'automatic-search',
       title: 'Auto Search',
@@ -58,66 +56,6 @@
     });
 
     create({
-      id: 'search-scope',
-      title: 'Search Scope',
-      contexts: ['action']
-    });
-    create({
-      type: 'radio',
-      id: 'scope:title',
-      title: 'Only index page title',
-      contexts: ['action'],
-      checked: prefs.scope === 'title',
-      parentId: 'search-scope'
-    });
-    create({
-      type: 'radio',
-      id: 'scope:body',
-      title: 'Only index page content',
-      contexts: ['action'],
-      checked: prefs.scope === 'body',
-      parentId: 'search-scope'
-    });
-    create({
-      type: 'radio',
-      id: 'scope:both',
-      title: 'Index both page body and title',
-      contexts: ['action'],
-      checked: prefs.scope === 'both',
-      parentId: 'search-scope'
-    });
-
-    create({
-      id: 'search-index',
-      title: 'Search Crawler',
-      contexts: ['action']
-    });
-    create({
-      type: 'radio',
-      id: 'index:window',
-      title: 'Only index current window',
-      contexts: ['action'],
-      checked: prefs.index === 'window',
-      parentId: 'search-index'
-    });
-    create({
-      type: 'radio',
-      id: 'index:tab',
-      title: 'Only index current tab',
-      contexts: ['action'],
-      checked: prefs.index === 'tab',
-      parentId: 'search-index'
-    });
-    create({
-      type: 'radio',
-      id: 'index:browser',
-      title: 'Index all windows',
-      contexts: ['action'],
-      checked: prefs.index === 'browser',
-      parentId: 'search-index'
-    });
-
-    create({
       id: 'search-engine',
       title: 'Search Engine',
       contexts: ['action']
@@ -151,14 +89,6 @@
       title: 'Always Try to Scroll to a Matching Result',
       contexts: ['action'],
       checked: prefs.strict,
-      parentId: 'options'
-    });
-    create({
-      type: 'checkbox',
-      id: 'duplicates',
-      title: 'Ignore Duplicated Tabs',
-      contexts: ['action'],
-      checked: prefs.duplicates,
       parentId: 'options'
     });
     create({
@@ -420,7 +350,7 @@
       title: 'How to Use',
       contexts: ['action']
     });
-  });
+  };
   chrome.runtime.onStartup.addListener(startup);
   chrome.runtime.onInstalled.addListener(startup);
 }
@@ -445,16 +375,6 @@ chrome.contextMenus.onClicked.addListener(info => {
   else if (info.menuItemId === 'preview') {
     chrome.tabs.create({
       url: 'https://www.youtube.com/watch?v=ks0PDxFBrA0'
-    });
-  }
-  else if (info.menuItemId.startsWith('scope:')) {
-    chrome.storage.local.set({
-      scope: info.menuItemId.replace('scope:', '')
-    });
-  }
-  else if (info.menuItemId.startsWith('index:')) {
-    chrome.storage.local.set({
-      index: info.menuItemId.replace('index:', '')
     });
   }
   else if (info.menuItemId.startsWith('engine:')) {
