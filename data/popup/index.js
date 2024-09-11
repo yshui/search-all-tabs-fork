@@ -403,82 +403,6 @@ document.getElementById('search').addEventListener('input', async e => {
   await chrome.storage.local.set({query});
 });
 
-/*
-const deep = async a => {
-  const guid = a.dataset.guid;
-  const data = await engine.body(guid);
-
-  await engine.new(1, 'deep-search');
-
-  const prefs = await new Promise(resolve => chrome.storage.local.get({
-    'snippet-size': 300,
-    'search-size': 30
-  }, resolve));
-
-  const parts = data.body.split(/\n+/).filter(a => a);
-  const bodies = [];
-  let body = '';
-  for (const part of parts) {
-    body += '\n' + part;
-
-    if (body.length > prefs['snippet-size']) {
-      bodies.push(body);
-      body = '';
-    }
-  }
-  if (body) {
-    bodies.push(body);
-  }
-
-  const lang = data.lang;
-  try {
-    for (const body of bodies) {
-      await engine.add({
-        body,
-        lang
-      }, undefined, undefined, 1);
-    }
-    const {size} = await engine.search({
-      query: document.querySelector('#search input[type=search]').value,
-      lang,
-      length: prefs['search-size']
-    }, 1);
-
-    if (size) {
-      const o = a.closest('.result');
-      for (let index = size - 1; index >= 0; index -= 1) {
-        const n = o.cloneNode(true);
-
-        const snippet = await engine.search.snippet({
-          index,
-          size: prefs['snippet-size']
-        });
-
-        n.classList.add('sub');
-        n.querySelector('img').remove();
-        n.querySelector('[data-id=title]').textContent = '⇢ ' + n.querySelector('[data-id=title]').textContent;
-        n.querySelector('p').content = n.querySelector('p').innerHTML = snippet;
-
-        const code = n.querySelector('h2 code');
-        const percent = await engine.search.percent(index);
-        code.textContent = percent + '%';
-
-        // intersection observer
-        new IntersectionObserver(arrange, {
-          threshold: 1.0
-        }).observe(n.querySelector('h2'));
-
-        o.insertAdjacentElement('afterend', n);
-      }
-    }
-  }
-  catch (e) {
-    console.warn(e);
-  }
-  engine.release(1);
-};
-*/
-
 document.addEventListener('click', e => {
   const a = e.target.closest('[data-cmd]');
 
@@ -492,15 +416,6 @@ document.addEventListener('click', e => {
     e.preventDefault();
     return;
   }
-/*
-  if (e.target.dataset.id === 'deep-search') {
-    e.preventDefault();
-    e.target.textContent = '';
-    e.target.classList.add('done');
-
-    return deep(a);
-  }
-*/
   if (a) {
     const cmd = a.dataset.cmd;
 
