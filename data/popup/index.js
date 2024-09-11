@@ -3,8 +3,8 @@
 
 // Tests => PDF, discarded tab, about:blank, chrome://extensions/, google, webstore
 
-const pdfjsLib = window['pdfjs-dist/build/pdf'];
-pdfjsLib.GlobalWorkerOptions.workerSrc = './parser/pdf.worker.js';
+import * as pdfjsLib from "./parser/pdf.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "./parser/pdf.worker.mjs";
 
 const args = new URLSearchParams(location.search);
 document.body.dataset.mode = args.get('mode');
@@ -71,7 +71,7 @@ const index = async (tabId, options = {}) => {
           }
         }
         if (parse) {
-          pdfjsLib.getDocument(tab.url).promise.then(pdf => {
+          pdfjsLib.getDocument(new URL(tab.url)).promise.then(pdf => {
             return Promise.all(Array.from(Array(pdf.numPages)).map(async (a, n) => {
               const page = await pdf.getPage(n + 1);
               const content = await page.getTextContent();
