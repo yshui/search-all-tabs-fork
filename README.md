@@ -1,3 +1,6 @@
+> [!NOTE]
+> This is a fork of the original search-all-tabs with persistent index support.
+
 # Search all Tabs
 
 This extension provides a powerful content searching tool for you to easily find the relevant tab among many open ones. Like all search engines, this extension supports search operators like "AND" and "OR". You can use this extension to find the relevant content when there are many open tabs like a normal tab manager extension. It is also possible to index local files as well. This extension supports parsing content from around 30 languages and displays a preview (snippet) for the matching result. You can click on each search entry to directly activate the container tab.
