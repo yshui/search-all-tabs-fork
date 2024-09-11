@@ -1,9 +1,31 @@
 "use strict";
 
-const tab_highlight = {};
-let index_queue = {};
-let all_seen_tabs = new Set([]);
-let started = false;
+let tab_highlight = null;
+let index_queue = null;
+let all_seen_tabs = null;
+
+const restore = async () => {
+  if (index_queue !== null && all_seen_tabs !== null && tab_highlight !== null) {
+    return true;
+  }
+  const obj = await chrome.storage.session.get({
+    index_queue: null,
+    all_seen_tabs: null,
+    tab_highlight: null,
+  });
+  index_queue = obj.index_queue;
+  all_seen_tabs = obj.all_seen_tabs;
+  tab_highlight = obj.tab_highlight;
+  return index_queue !== null && all_seen_tabs !== null && tab_highlight !== null;
+};
+
+const save = async() => {
+  if (index_queue === null || all_seen_tabs === null || tab_highlight === null) {
+    return false;
+  }
+  await chrome.storage.session.set({index_queue, all_seen_tabs, tab_highlight});
+  return true;
+}
 
 // remove all remaining databases on startup
 const once = async () => {
@@ -11,56 +33,72 @@ const once = async () => {
     indexedDB.deleteDatabase(name);
   }
 
+  tab_highlight = {};
   index_queue = {};
+  all_seen_tabs = {};
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
     index_queue[tab.id] = 1;
-    all_seen_tabs.add(tab.id);
+    all_seen_tabs[tab.id] = true;
   }
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    console.log(`Removed tab: ${tabId}`);
-    delete tab_highlight[tabId];
-    all_seen_tabs.delete(tabId);
-    index_queue[tabId] = -1;
-  });
-  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-    if (info.discarded === true) {
-      // Don't re-index discarded tabs
-      return;
-    }
-    if (!all_seen_tabs.has(tabId)) {
-      console.log(`New tab ${tabId}`);
-      index_queue[tabId] = 1;
-      all_seen_tabs.add(tabId);
-    } else {
-      console.log(`Updated tab: ${tabId}`);
-      index_queue[tabId] = 0;
-    }
-    console.log(`Updated tab: ${tabId}`);
-    console.log("Changed attributes: ", info);
-    console.log("New tab Info: ", tab);
-  });
-  chrome.tabs.onActivated.addListener(({ tabId }) => {
-    console.log(`Activated tab: ${tabId}`);
-    if (!all_seen_tabs.has(tabId)) {
-      console.log("Activated tab was never seen.");
-      all_seen_tabs.add(tabId);
-      index_queue[tabId] = 1;
-    } else {
-      index_queue[tabId] = 0;
-    }
-  });
-  started = true;
+  await save();
 };
 chrome.runtime.onInstalled.addListener(once);
 chrome.runtime.onStartup.addListener(once);
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  if (!await restore()) {
+    console.log("Not ready");
+    return;
+  }
+  console.log(`Removed tab: ${tabId}`);
+  delete tab_highlight[tabId];
+  delete all_seen_tabs[tabId];
+  index_queue[tabId] = -1;
+  await save();
+});
+chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (info.discarded === true) {
+    // Don't re-index discarded tabs
+    return;
+  }
+  if (!await restore()) {
+    console.log("Not ready");
+    return;
+  }
+  if (!(tabId in all_seen_tabs)) {
+    console.log(`New tab ${tabId}`);
+    index_queue[tabId] = 1;
+    all_seen_tabs[tabId] = true;
+  } else {
+    console.log(`Updated tab: ${tabId}`);
+    index_queue[tabId] = 0;
+  }
+  console.log(`Updated tab: ${tabId}`);
+  console.log("Changed attributes: ", info);
+  console.log("New tab Info: ", tab);
+  await save();
+});
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  if (!await restore()) {
+    console.log("Not ready");
+    return;
+  }
+  console.log(`Activated tab: ${tabId}`);
+  if (!(tabId in all_seen_tabs)) {
+    console.log("Activated tab was never seen.");
+    all_seen_tabs[tabId] = true;
+    index_queue[tabId] = 1;
+  } else {
+    index_queue[tabId] = 0;
+  }
+  await save();
+});
 
 chrome.runtime.onMessage.addListener(async (request, sender, response) => {
-  if (!started) {
-    console.warn("startup routine not called?!?!");
-    await once();
-  }
   if (request.method === "find") {
+    if (!await restore()) {
+      tab_highlight = {};
+    }
     try {
       chrome.tabs.update(request.tabId, {
         active: true,
@@ -78,6 +116,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, response) => {
       (request.snippet.includes("<b>") || prefs.strict)
     ) {
       tab_highlight[request.tabId] = request;
+      await save();
       chrome.scripting.executeScript(
         {
           target: {
@@ -92,6 +131,9 @@ chrome.runtime.onMessage.addListener(async (request, sender, response) => {
   }
 
   if (request.method === "get_highlight") {
+    if (!await restore()) {
+      return "";
+    }
     return tab_highlight[sender.tab.id];
   }
 
@@ -122,9 +164,13 @@ chrome.runtime.onMessage.addListener(async (request, sender, response) => {
   }
 
   if (request.method === "get_jobs") {
+    if (!await restore()) {
+      return {};
+    }
     console.log(`tab delta: ${Object.keys(index_queue)}`);
     const ret = index_queue;
     index_queue = {};
+    await save();
     return ret;
   }
 
